@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "personas": {
+    "collaborative": {
+      "label": "共創型の討論者",
+      "personality": "Public description for UI only.",
+      "speakingStyle": "Public speaking style for UI only."
+    },
+    "logical": {
+      "label": "論理型の討論者",
+      "personality": "Public description for UI only.",
+      "speakingStyle": "Public speaking style for UI only."
+    }
+  },
+  "personaInstructions": {
+    "collaborative": "Put the collaborative persona instruction here.",
+    "logical": "Put the logical persona instruction here."
+  },
+  "discussionSystemTemplate": "Put the Gemini Live discussion system prompt here. Available variables: $topic, $persona_key, $persona_label, $persona_instruction, $candidate_last_name, $candidate_last_name_kana, $criteria.",
+  "discussionConclusion": "Put the conclusion prompt here.",
+  "discussionInterruption": "Put the interruption prompt here.",
+  "topicGenerationSystem": "Put the topic generation system prompt here.",
+  "topicGenerationUserTemplate": "Put the topic generation user prompt here. Available variables: $difficulty_hint, $count, $current_hint_text, $random_seed.",
+  "feedbackSummarySystem": "Put the feedback summary system prompt here.",
+  "feedbackSummaryUserTemplate": "Put the feedback summary user prompt here. Available variables: $source_json."
+}

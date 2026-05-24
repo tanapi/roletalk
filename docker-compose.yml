@@ -1,0 +1,61 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+      - "50000-50050:50000-50050/udp"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/logs:/app/logs
+    environment:
+      - TZ=Asia/Tokyo
+      - PYTHONUNBUFFERED=1
+      - BACKEND_LOG_FILE=/app/logs/app.log
+      - BACKEND_LOG_TIMEZONE=${BACKEND_LOG_TIMEZONE:-Asia/Tokyo}
+      - BACKEND_LOG_MAX_BYTES=${BACKEND_LOG_MAX_BYTES:-5242880}
+      - BACKEND_LOG_BACKUP_COUNT=${BACKEND_LOG_BACKUP_COUNT:-3}
+      - VOICE_PROVIDER=gemini-live
+      - VOICE_TRANSPORT=${VOICE_TRANSPORT:-local-webrtc}
+      - GEMINI_LIVE_MODEL=${GEMINI_LIVE_MODEL:-gemini-3.1-flash-live-preview}
+      - GEMINI_LIVE_VOICE=${GEMINI_LIVE_VOICE:-Charon}
+      - GEMINI_LIVE_LANGUAGE=${GEMINI_LIVE_LANGUAGE:-ja-JP}
+      - GEMINI_VAD_TURN_COVERAGE=${GEMINI_VAD_TURN_COVERAGE:-TURN_INCLUDES_ALL_INPUT}
+      - GEMINI_VAD_SILENCE_MS=${GEMINI_VAD_SILENCE_MS:-1000}
+      - GEMINI_VAD_PREFIX_PADDING_MS=${GEMINI_VAD_PREFIX_PADDING_MS:-500}
+      - GEMINI_VAD_START_SENSITIVITY=${GEMINI_VAD_START_SENSITIVITY:-START_SENSITIVITY_HIGH}
+      - GEMINI_VAD_END_SENSITIVITY=${GEMINI_VAD_END_SENSITIVITY:-END_SENSITIVITY_LOW}
+      - GEMINI_TRANSCRIPT_NORMALIZE=${GEMINI_TRANSCRIPT_NORMALIZE:-1}
+      - GEMINI_OUTPUT_PITCH_FACTOR=${GEMINI_OUTPUT_PITCH_FACTOR:-0.92}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - WEBRTC_UDP_PORT_MIN=${WEBRTC_UDP_PORT_MIN:-50000}
+      - WEBRTC_UDP_PORT_MAX=${WEBRTC_UDP_PORT_MAX:-50050}
+      - WEBRTC_ICE_HOST=${WEBRTC_ICE_HOST:-}
+      - CLOUDFLARE_REALTIME_APP_ID=${CLOUDFLARE_REALTIME_APP_ID:-}
+      - CLOUDFLARE_REALTIME_APP_SECRET=${CLOUDFLARE_REALTIME_APP_SECRET:-}
+      - CLOUDFLARE_REALTIME_BASE_URL=${CLOUDFLARE_REALTIME_BASE_URL:-https://rtc.live.cloudflare.com/v1}
+      - VOICE_BRIDGE_PUBLIC_BASE_URL=${VOICE_BRIDGE_PUBLIC_BASE_URL:-}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/certs:/app/certs
+    environment:
+      - TZ=Asia/Tokyo
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-}
+    command: npm run dev -- --host 0.0.0.0
+    depends_on:
+      - backend

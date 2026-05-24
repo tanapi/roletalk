@@ -1,0 +1,80 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+
+# Environment variables / local secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.local
+
+# Deploy target / cloud account settings
+deploy.sh
+deploy.local.sh
+.deploy.env
+.deploy.env.*
+backend/prompts.local.json
+prompts.local.json
+designe.md
+wrangler.toml
+wrangler.jsonc
+cloudflare-api/wrangler.toml
+cloudflare-api/wrangler.jsonc
+.wrangler/
+**/.wrangler/
+.config/gcloud/
+
+# Credentials / certificates / keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*service-account*.json
+*credentials*.json
+*credential*.json
+*secret*.json
+google-application-credentials.json
+frontend/certs/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+backend/.venv/
+
+# Node / frontend
+node_modules/
+**/node_modules/
+frontend/dist/
+dist/
+*.tsbuildinfo
+
+# Logs / runtime output
+*.log
+backend/logs/
+logs/
+
+# Local captures / generated media
+*.wav
+*.webm
+*.m4a
+*.mp4
+*.mov
+*.pcm
+
+# Build / cache artifacts
+.cache/
+.parcel-cache/
+coverage/
+tmp/
+temp/

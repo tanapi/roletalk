@@ -1,0 +1,112 @@
+name: Manual release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Release target"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - backend
+          - frontend
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    name: Release backend
+    if: ${{ inputs.target == 'all' || inputs.target == 'backend' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+      GCP_SERVICE_NAME: ${{ secrets.GCP_SERVICE_NAME }}
+      GCP_ARTIFACT_REPO: ${{ secrets.GCP_ARTIFACT_REPO }}
+      BACKEND_IMAGE_NAME: ${{ secrets.BACKEND_IMAGE_NAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate backend secrets
+        run: |
+          test -n "$GCP_PROJECT_ID"
+          test -n "$GCP_REGION"
+          test -n "$GCP_SERVICE_NAME"
+          test -n "$GCP_ARTIFACT_REPO"
+          test -n "$BACKEND_IMAGE_NAME"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push backend image
+        run: |
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REPO}/${BACKEND_IMAGE_NAME}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" ./backend
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Update backend service
+        run: |
+          gcloud run services update "$GCP_SERVICE_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE"
+
+  frontend:
+    name: Release frontend
+    if: ${{ always() && (inputs.target == 'all' || inputs.target == 'frontend') && (needs.backend.result == 'success' || needs.backend.result == 'skipped') }}
+    needs: backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate frontend secrets
+        run: |
+          test -n "$VITE_API_BASE_URL"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_PAGES_PROJECT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Publish frontend
+        working-directory: frontend
+        run: npx wrangler pages deploy dist --project-name "$CLOUDFLARE_PAGES_PROJECT"
