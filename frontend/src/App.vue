@@ -1314,7 +1314,13 @@ function handleVoiceEvent(id: string, payload: { type?: string; [key: string]: u
   }
   if (payload.type === 'input_transcript') {
     const text = String(payload.text ?? '')
+    if (discussionConclusionRequested.value || discussionEnding.value) {
+      debugLog('discussion.input_transcript_ignored_after_conclusion', { chars: text.length })
+      return
+    }
     upsertTranscript('user', text)
+  } else if (payload.type === 'input_transcript_ignored_after_conclusion') {
+    debugLog('discussion.input_transcript_ignored_after_conclusion', { chars: payload.chars })
   } else if (payload.type === 'output_transcript') {
     if (suppressingAnswerResponseBeforeConclusion && !discussionConclusionRequested.value) {
       const text = String(payload.text ?? '')

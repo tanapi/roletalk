@@ -90,6 +90,7 @@ class CloudflareRealtimeBridgeSession:
         self.assistant_output_active = False
         self.assistant_generation_complete = False
         self.pending_discussion_conclusion = False
+        self.discussion_conclusion_input_closed = False
         self.skip_current_turn_for_discussion_conclusion = False
         self.buffered_input_after_generation: deque[bytes] = deque()
         self.buffered_input_after_generation_bytes = 0
@@ -206,9 +207,14 @@ class CloudflareRealtimeBridgeSession:
         elif event_type == "discussion_conclusion":
             self.ensure_started()
             self.pending_discussion_conclusion = True
+            self.discussion_conclusion_input_closed = True
+            self.pending_input_transcripts = []
+            self._close_open_scoring_segment("discussion_conclusion")
             self.skip_current_turn_for_discussion_conclusion = (
                 self.turn_output_started or self.turn_output_audio_chunks > 0 or self.turn_output_transcripts > 0
             )
+            self._drop_pending_realtime_audio()
+            self._send_gemini_audio_stream_end("discussion_conclusion")
             self._queue_control_text_turn(self._discussion_conclusion_prompt(), "discussion_conclusion_turn")
         elif event_type == "discussion_interruption":
             self.ensure_started()
@@ -296,6 +302,9 @@ class CloudflareRealtimeBridgeSession:
                     if pcm_payload is None:
                         pcm_payload = data
                     gemini_pcm = _pcm_stereo_48k_to_mono_48k(pcm_payload)
+                    if self.discussion_conclusion_input_closed:
+                        self.counters["suppressed_input_audio_frames"] += 1
+                        continue
                     self.counters["input_audio_frames"] += 1
                     self.counters["input_audio_bytes"] += len(gemini_pcm)
                     self._record_input_audio_stats(gemini_pcm)
@@ -568,14 +577,18 @@ class CloudflareRealtimeBridgeSession:
                 if "inputTranscription" in server_content:
                     text = _normalize_transcript(server_content["inputTranscription"].get("text", ""))
                     if text:
-                        self.counters["input_transcripts"] += 1
-                        self.last_input_transcript_at = time.monotonic()
-                        self._trace("input_transcript", {"chars": len(text)})
-                        self.pending_input_transcripts.append(text)
-                        self._append_session_message("user", text)
-                        self._record_scoring_segment_realtime_text(text)
-                        self._emit_event({"type": "input_transcript", "text": text})
-                        self.record_timeline_event("user_transcript", role="user", text=text)
+                        if self.discussion_conclusion_input_closed:
+                            self._trace("input_transcript_ignored_after_conclusion", {"chars": len(text)})
+                            self._emit_event({"type": "input_transcript_ignored_after_conclusion", "chars": len(text)})
+                        else:
+                            self.counters["input_transcripts"] += 1
+                            self.last_input_transcript_at = time.monotonic()
+                            self._trace("input_transcript", {"chars": len(text)})
+                            self.pending_input_transcripts.append(text)
+                            self._append_session_message("user", text)
+                            self._record_scoring_segment_realtime_text(text)
+                            self._emit_event({"type": "input_transcript", "text": text})
+                            self.record_timeline_event("user_transcript", role="user", text=text)
 
                 if "outputTranscription" in server_content:
                     text = _normalize_transcript(server_content["outputTranscription"].get("text", ""))
@@ -675,7 +688,12 @@ class CloudflareRealtimeBridgeSession:
                         conclusion_pending_after_turn = False
                     self._emit_event({"type": "turn_complete"})
                     self.record_timeline_event("assistant_turn_complete", role="assistant")
-                    if self.pending_input_transcripts and self.turn_output_audio_chunks == 0 and self.turn_output_transcripts == 0:
+                    if (
+                        self.pending_input_transcripts
+                        and not self.discussion_conclusion_input_closed
+                        and self.turn_output_audio_chunks == 0
+                        and self.turn_output_transcripts == 0
+                    ):
                         fallback_text = "".join(self.pending_input_transcripts).strip()
                         if fallback_text:
                             self.counters["gemini_response_fallbacks"] += 1
