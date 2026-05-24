@@ -26,22 +26,27 @@ jobs:
       contents: read
       id-token: write
     env:
-      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      GCP_REGION: ${{ secrets.GCP_REGION }}
-      GCP_SERVICE_NAME: ${{ secrets.GCP_SERVICE_NAME }}
-      GCP_ARTIFACT_REPO: ${{ secrets.GCP_ARTIFACT_REPO }}
-      BACKEND_IMAGE_NAME: ${{ secrets.BACKEND_IMAGE_NAME }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION || secrets.GCP_REGION }}
+      GCP_SERVICE_NAME: ${{ vars.GCP_SERVICE_NAME || secrets.GCP_SERVICE_NAME }}
+      GCP_ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO || secrets.GCP_ARTIFACT_REPO }}
+      BACKEND_IMAGE_NAME: ${{ vars.BACKEND_IMAGE_NAME || secrets.BACKEND_IMAGE_NAME }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Validate backend secrets
         run: |
-          test -n "$GCP_PROJECT_ID"
-          test -n "$GCP_REGION"
-          test -n "$GCP_SERVICE_NAME"
-          test -n "$GCP_ARTIFACT_REPO"
-          test -n "$BACKEND_IMAGE_NAME"
+          missing=0
+          for name in GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME GCP_ARTIFACT_REPO BACKEND_IMAGE_NAME GCP_WORKLOAD_IDENTITY_PROVIDER GCP_SERVICE_ACCOUNT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required backend deploy configuration: ${name}"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
