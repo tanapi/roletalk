@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 type Difficulty = 'easy' | 'normal' | 'hard'
 type SessionMode = 'discussion'
@@ -162,6 +162,18 @@ type VoiceTransportInfo = {
   stunServers: string[]
 }
 
+type WakeLockSentinelLike = {
+  released: boolean
+  release: () => Promise<void>
+  addEventListener: (type: 'release', listener: () => void) => void
+}
+
+type WakeLockNavigator = Navigator & {
+  wakeLock?: {
+    request: (type: 'screen') => Promise<WakeLockSentinelLike>
+  }
+}
+
 function resolveApiBase() {
   const configured = String(import.meta.env.VITE_API_BASE_URL ?? '').trim()
   const pageHost = window.location.hostname
@@ -308,6 +320,9 @@ let micMonitorAnalyser: AnalyserNode | null = null
 let micMonitorTimer = 0
 let playbackInterruptSpeechStartedAt = 0
 let playbackInterruptedThisAssistantTurn = false
+let remoteAudioTrackReady = false
+let wakeLock: WakeLockSentinelLike | null = null
+let wakeLockRequested = false
 
 
 function buildMicConstraints(): MediaStreamConstraints {
@@ -636,6 +651,7 @@ function returnToModeSelection() {
 function resetSessionState() {
   debugLog('session.reset')
   shouldReconnectVoice = false
+  releaseWakeLock()
   closePeerConnection()
   feedback.value = null
   audioInsight.value = []
@@ -682,6 +698,7 @@ function resetSessionState() {
   lastAiInterruptionAt = 0
   playbackInterruptSpeechStartedAt = 0
   playbackInterruptedThisAssistantTurn = false
+  remoteAudioTrackReady = false
   reconnectAttempts = 0
   sentAudioChunks = 0
   sentAudioSamples = 0
@@ -815,6 +832,7 @@ async function startSession(discussionTopic = '') {
     durationSec.value = data.durationSec
     interviewer.value = data.interviewer
     scenario.value = data.scenario
+    void requestWakeLock()
     await loadInterviewerAssets(data.scenario)
     pendingOpeningQuestion.value = data.openingQuestion
     awaitingOpeningTranscript.value = true
@@ -986,6 +1004,26 @@ async function waitForPeerConnectionConnected(pc: RTCPeerConnection, timeoutMs =
   })
 }
 
+async function waitForRemoteAudioTrackReady(timeoutMs = 800) {
+  if (remoteAudioTrackReady || remoteStream?.getAudioTracks().length) return
+  await new Promise<void>((resolve) => {
+    function onTrack(event: Event) {
+      const track = (event as MediaStreamTrackEvent).track
+      if (track?.kind !== 'audio') return
+      window.clearTimeout(timeout)
+      remoteStream?.removeEventListener('addtrack', onTrack)
+      resolve()
+    }
+
+    const timeout = window.setTimeout(() => {
+      remoteStream?.removeEventListener('addtrack', onTrack)
+      resolve()
+    }, timeoutMs)
+
+    remoteStream?.addEventListener('addtrack', onTrack)
+  })
+}
+
 async function connectVoiceSocket(id: string) {
   const transportInfo = await loadVoiceTransportInfo()
   let lastError: unknown = null
@@ -1073,6 +1111,9 @@ async function connectCloudflareRealtime(id: string, transportInfo: VoiceTranspo
 
   pc.ontrack = (event) => {
     debugLog('cloudflare_realtime.remote_track', { kind: event.track.kind, muted: event.track.muted })
+    if (event.track.kind === 'audio') {
+      remoteAudioTrackReady = true
+    }
     event.track.onmute = () => {
       debugLog('cloudflare_realtime.remote_track_muted', { kind: event.track.kind })
     }
@@ -1214,8 +1255,6 @@ async function connectCloudflareRealtime(id: string, transportInfo: VoiceTranspo
     state: pc.connectionState,
     iceState: pc.iceConnectionState,
   })
-  handleVoiceEvent(id, { type: 'setup_complete' })
-
   debugLog('cloudflare_realtime.adapters_requesting', {
     sessionId: response.sessionId,
     micTrackName: publishedMicTrackName,
@@ -1252,6 +1291,8 @@ async function connectCloudflareRealtime(id: string, transportInfo: VoiceTranspo
     remoteTracks: adaptersResponse.remoteTracks?.length ?? 0,
     adapters: adaptersResponse.adapters?.length ?? 0,
   })
+  await waitForRemoteAudioTrackReady()
+  handleVoiceEvent(id, { type: 'setup_complete' })
   startVoiceEventsPolling(id)
 
   window.clearTimeout(connectionWatchdogTimer)
@@ -1834,6 +1875,43 @@ function stopMicrophone() {
   debugLog('mic.stopped')
 }
 
+async function requestWakeLock() {
+  wakeLockRequested = true
+  if (document.visibilityState !== 'visible') return
+  const wakeLockApi = (navigator as WakeLockNavigator).wakeLock
+  if (!wakeLockApi) {
+    debugLog('wake_lock.unsupported')
+    return
+  }
+  if (wakeLock && !wakeLock.released) return
+  try {
+    wakeLock = await wakeLockApi.request('screen')
+    wakeLock.addEventListener('release', () => {
+      debugLog('wake_lock.released')
+      wakeLock = null
+    })
+    debugLog('wake_lock.acquired')
+  } catch (error) {
+    debugLog('wake_lock.failed', { message: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+function releaseWakeLock() {
+  wakeLockRequested = false
+  const currentWakeLock = wakeLock
+  wakeLock = null
+  if (currentWakeLock && !currentWakeLock.released) {
+    void currentWakeLock.release().catch((error: unknown) => {
+      debugLog('wake_lock.release_failed', { message: error instanceof Error ? error.message : String(error) })
+    })
+  }
+}
+
+function handleVisibilityChange() {
+  if (!wakeLockRequested || document.visibilityState !== 'visible') return
+  void requestWakeLock()
+}
+
 function latestAssistantText() {
   return [...messages.value].reverse().find((message) => message.role === 'assistant')?.content.trim() ?? ''
 }
@@ -2112,6 +2190,7 @@ async function finishSession() {
     finishWhenPlaybackEnds: finishWhenPlaybackEnds.value,
   })
   shouldReconnectVoice = false
+  releaseWakeLock()
   window.clearTimeout(reconnectTimer)
   window.clearTimeout(finalFinishTimer)
   window.clearInterval(elapsedTimer)
@@ -2127,6 +2206,15 @@ async function finishSession() {
     isScoringFeedback.value = false
   }
 }
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  releaseWakeLock()
+})
 
 </script>
 
